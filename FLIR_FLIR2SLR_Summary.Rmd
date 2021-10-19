@@ -1,0 +1,167 @@
+---
+title: "Harbor Seal FLIR::SLR Comparison"
+author: "S. Hardy, C. Christman"
+date: "2020-02-05"
+output: html_document
+---
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load libraries
+library(RPostgres)
+library(tidyverse)
+
+
+# Connect to DB
+con <- RPostgres::dbConnect(Postgres(), 
+                              dbname = Sys.getenv("pep_db"), 
+                              host = Sys.getenv("pep_ip"), 
+                              port = Sys.getenv("pep_port"),
+                              user = Sys.getenv("pep_user"), 
+                              password = "$e@l")
+                                #rstudioapi::askForPassword(paste("Enter your DB password for user account: ", Sys.getenv("pep_user"), sep = "")))
+
+dat <- RPostgres::dbGetQuery(con, "SELECT * FROM surv_pv_cst.summ_flir_trial_2019")
+RPostgres::dbDisconnect(con)
+rm(con)
+
+```
+
+## Introduction
+
+The intent of this document is to provide an overview comparison of the images counted in the FLIR and SLR survey trials conducted in August, September 2019. A few caveats in the data:
+
+* All SLR and FLIR images have been counted for the trial survey period. 
+* Possible species misclassification (with sea otters and Steller sea lions).
+* These data represent all polys where the data were flagged to be used for the FLIR-SLR trials. Some polygons were excluded because of:
+  + Partial survey coverage
+  + Mismatched survey coverage
+  + Issues presented in the field during survey
+* Better scanning ability with FLIR. It is not clear the same areas are covered by both survey methods.
+* Survey time for each polygon is yet available for these data, because SKH needs to make updates to the tide station data before the associated code for calculating survey_dt and tidal covariates can be run. Once that is complete, I can add figures for evaluating the FLIR to SLR data based on time of day.
+* There are a number items Cynthia identified that need to be corrected in the data (e.g. likely incorrect coordinates), that may affect the counts associated with some of the polygons. 
+* QA/QC on the entire dataset has not yet been completed.
+
+### Number of seals at each polyID by FLIR operator
+This figure depicts the number of seals counted at each polyID based on FLIR operator. The bars depict FLIR and SLR counts by effort type. A couple things to note:
+
+* Double-wide bars at a given polygon (e.g. JML OB06 and OB07) indicate only one count for that site is available (either FLIR or SLR). There were certain cases where Paul wanted single counts kept, even if counts using the other method were not available.
+* Single-wide bars at a given polygon (e.g. HLZ XD07) indicate that both effort types were flown and the count for one (or both) of the trials was zero.
+
+```{r dat, fig.height = 10, fig.width = 10, echo = FALSE, warning = FALSE}
+ggplot2::ggplot(data = dat) +
+  geom_bar(aes(x = polyid, y = num_seals, fill = effort_type), stat = "identity", position = "dodge") + 
+  scale_fill_manual(breaks = c("Full FLIR survey, no recon", "Full FLIR survey, recon", "Full survey, no recon", "Full survey, recon"),
+                    values = c("aquamarine3", "aquamarine4", "darkolivegreen3", "darkolivegreen4")) +
+  facet_wrap(. ~ flir_operator, nrow = length(unique(dat$flir_operator)), scales = "free") 
+```
+
+### Number of seals at each polyID by date
+This figure depicts the number of seals counted at each polyID based on the survey date. The bars depict FLIR and SLR counts by effort type. A couple things to note:
+
+* Double-wide bars at a given polygon (e.g. 2019-08-17 OB06 and OB07) indicate only one count for that site is available (either FLIR or SLR). There were certain cases where Paul wanted single counts kept, even if counts using the other method were not available.
+* Single-wide bars at a given polygon (e.g.  2019-09-09 XD07) indicate that both effort types were flown and the count for one (or both) of the trials was zero.
+
+```{r dat_test, fig.width = 14, fig.height = 10, echo = FALSE, warning = FALSE}
+dat$polyid_date_id <- paste(as.character(dat$survey_date), dat$polyid, sep = "-")
+
+ggplot2::ggplot(data = dat) +
+  geom_bar(aes(x = polyid_date_id, y = num_seals, fill = effort_type), stat = "identity", position = "dodge") + 
+  scale_fill_manual(breaks = c("Full FLIR survey, no recon", "Full FLIR survey, recon", "Full survey, no recon", "Full survey, recon"),
+                    values = c("aquamarine3", "aquamarine4", "darkolivegreen3", "darkolivegreen4")) +
+  #facet_wrap(. ~ flir_operator, nrow = length(unique(dat$flir_operator)), scales = "free") 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+### Number of seals by method
+This figure compares the number of seals counted using each method. Points are colored based on the altitude of aircraft during the FLIR pass. The line going through the figure represents the 1:1 line. The closer points are to this line, the more similar the counts are between the two methods.
+
+```{r dat_merge, fig.height = 8, echo = FALSE, warning = FALSE}
+dat_slr <- dat %>%
+  dplyr::filter(effort_type == "Full survey, no recon" | effort_type == "Full survey, recon") %>%
+  dplyr::select(survey_date, photographer, polyid, num_seals, temp_c_slr_trial, temp_c_slr_trial, track_rep)
+dat_flir <- dat %>%
+  dplyr::filter(effort_type == "Full FLIR survey, no recon" | effort_type == "Full FLIR survey, recon") %>%
+  dplyr::select(survey_date, photographer, flir_operator, flir_count_obs, polyid, num_seals, altitude_flir_trial, sky_cover, precipitation, track_rep)
+dat_merge <- dplyr::full_join(dat_flir, dat_slr, by = c("survey_date", "photographer", "polyid")) %>%
+  dplyr::rename(num_seals_flir = num_seals.x, num_seals_slr = num_seals.y,
+                track_rep_flir = track_rep.x, track_rep_slr = track_rep.y) %>%
+  dplyr::filter(!is.na(altitude_flir_trial))
+
+mid <- mean(dat_merge$altitude_flir_trial, na.rm = TRUE)
+
+ggplot2::ggplot(data = dat_merge) +
+  geom_point(aes(x = num_seals_flir, y = num_seals_slr), size = 3, color = "aquamarine3") + 
+  #scale_color_gradient2(midpoint = mid, low = "chartreuse3", mid = "deepskyblue4", high = "salmon") + 
+  coord_fixed() +
+  geom_abline(aes(slope = 1, intercept = 0), color = "azure3") +
+  theme(aspect.ratio = 1)
+```
+
+### Number of seals by altitude during FLIR trials
+This figure compares the number of seals counted using each method separated by the altitude (in ft) during the FLIR trial. The line going through each frame represents the 1:1 line. The closer points are to this line, the more similar the counts are between the two methods.
+
+```{r dat_altitude, fig.height = 8, echo = FALSE, warning = FALSE}
+dat_merge$altitude_flir_trial <- ifelse(dat_merge$altitude_flir_trial == 1600, 1700, ifelse(dat_merge$altitude_flir_trial == 1800, 1700, dat_merge$altitude_flir_trial))
+
+ggplot2::ggplot(data = dat_merge) +
+  geom_point(aes(x = num_seals_flir, y = num_seals_slr), size = 3, color = "aquamarine3") + 
+  geom_abline(aes(slope = 1, intercept = 0), color = "azure3") +
+  facet_wrap(. ~ as.integer(altitude_flir_trial), scales = "fixed") +
+  theme(aspect.ratio = 1)
+
+```
+
+### Number of seals by FLIR trial number
+This figure compares the number of seals counted using each method separated by the FLIR trial number. FLIR trials that were conducted before the SLR trials are shown in the frame labeled 1, and FLIR trails that were conducted after the SLR trails are show in the frame labeled 2. The line going through each frame represents the 1:1 line. The closer points are to this line, the more similar the counts are between the two methods.
+
+```{r dat_merge_trackrep, fig.height = 8, echo = FALSE, warning = FALSE}
+ggplot2::ggplot(data = dat_merge) +
+  geom_point(aes(x = num_seals_flir, y = num_seals_slr), size = 3, color = "aquamarine3") + 
+  facet_wrap(. ~ as.character(track_rep_flir), scales = "fixed") +
+  geom_abline(aes(slope = 1, intercept = 0), color = "azure3") +
+  theme(aspect.ratio=1)
+```
+
+### Number of seals by percent sky cover
+This figure compares the number of seals counted using each method separated by sky cover at the time of the FLIR trial. The line going through each frame represents the 1:1 line. The closer points are to this line, the more similar the counts are between the two methods.
+
+```{r dat_merge_cloud, fig.height = 8, echo = FALSE, warning = FALSE}
+dat_merge$sky_cover <- ifelse(dat_merge$sky_cover == "0-5", "00-05", ifelse(dat_merge$sky_cover == "5-30", "05-30", dat_merge$sky_cover))
+ggplot2::ggplot(data = dat_merge) +
+  geom_point(aes(x = num_seals_flir, y = num_seals_slr), size = 3, color = "aquamarine3") + 
+  facet_wrap(. ~ as.character(sky_cover), scales = "fixed") +
+  geom_abline(aes(slope = 1, intercept = 0), color = "azure3") +
+  theme(aspect.ratio=1)
+```
+
+### Number of seals by precipitation
+This figure compares the number of seals counted using each method separated by precipitation at the time of the FLIR trial. The line going through each frame represents the 1:1 line. The closer points are to this line, the more similar the counts are between the two methods.
+
+```{r dat_merge_sky, fig.height = 8, echo = FALSE, warning = FALSE}
+ggplot2::ggplot(data = dat_merge) +
+  geom_point(aes(x = num_seals_flir, y = num_seals_slr), size = 3, color = "aquamarine3") + 
+  geom_abline(aes(slope = 1, intercept = 0), color = "azure3") +
+  facet_wrap(. ~ as.character(precipitation), scales = "fixed") +
+  theme(aspect.ratio=1)
+```
+
+### Number of seals by temperature (*C) during the SLR pass
+
+This figure compares the number of seals counted using each method depicted based on the temperature recorded during the SLR trial. The line going through each frame represents the 1:1 line. The closer points are to this line, the more similar the counts are between the two methods.
+
+```{r dat_merge_temp, fig.height = 8, echo = FALSE, warning = FALSE}
+dat_temp <- dat_merge %>%
+  dplyr::filter(temp_c_slr_trial > -99)
+ggplot2::ggplot(data = dat_temp) +
+  geom_point(aes(x = num_seals_flir, y = num_seals_slr, color = temp_c_slr_trial), size = 3) + 
+  #facet_wrap(. ~ as.character(precipitation), scales = "fixed") +
+  geom_abline(aes(slope = 1, intercept = 0), color = "azure3") +
+  theme(aspect.ratio=1)
+```
+
+### SKH Comments
+* Using counts by poly as a proxy for differences between the two survey methods, but the real difference is whether the observers detected the same groups when in the field.
+* Add counts from FLIR not within X m distance from SLR images to augment count for "actual" count? (see map for example)

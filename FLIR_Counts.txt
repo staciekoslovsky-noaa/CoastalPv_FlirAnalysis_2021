@@ -1,0 +1,29 @@
+--For trial data
+--drop view surv_pv_cst.summ_flir_trial_2019; 
+create view surv_pv_cst.summ_flir_trial_2019 as 
+select survey_date, e.survey_dt, photographer, e.flir_operator, flir_count_obs, polyid, track_rep, effort_type, num_seals, 
+	altitude_flir_trial, temp_c_slr_trial, sky_cover, precipitation, 
+	tide_height, nearest_high_dt, nearest_high_height, nearest_low_dt, nearest_low_height
+from surv_pv_cst.tbl_effort e
+left join (select trackid, polyid, track_rep, sum(total) as num_seals from surv_pv_cst.summ_count_by_image group by trackid, polyid, track_rep) i
+using (trackid, polyid, track_rep)
+inner join surv_pv_cst.lku_effort_type
+using (effort_type_lku)
+left join (select survey_date, flir_operator, polyid, track_rep, survey_dt, row_number() over (partition by flir_operator order by survey_dt) as flir_count_obs
+	from surv_pv_cst.tbl_effort
+	where use_for_flir_trial = 'Y'
+	and (effort_type_lku = 'LP' or effort_type_lku = 'LS' or effort_type_lku = 'LR')) o
+using (survey_date, polyid, track_rep)
+where use_for_flir_trial = 'Y' 
+and survey_date > '2019-01-01'
+and survey_date < '2019-12-31'
+order by survey_date, polyid, track_rep;
+
+--For baseline data
+drop view surv_pv_cst.summ_flir_trial_2019_baseline;
+create view surv_pv_cst.summ_flir_trial_2019_baseline as
+select survey_dt, polyid, effort_type, non_pup, pup, non_pup + pup as num_seals, tide_height, nearest_high_dt, nearest_high_height, nearest_low_dt, nearest_low_height
+from surv_pv_cst.summ_count_by_polyid_4analysis
+where polyid in (select polyid from surv_pv_cst.summ_flir_trial_2019)
+and survey_dt > '2015-01-01' 
+and survey_dt < '2018-12-31';
